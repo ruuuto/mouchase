@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand Mouse LP Demo</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <style>
+        body { margin: 0; font-family: 'Helvetica Neue', Arial, sans-serif; height: 300vh; background: #f0f2f5; color: #333; }
+        
+        /* 疑似カーソル（赤い丸） */
+        #v-cursor {
+            width: 20px; height: 20px; background: rgba(255, 0, 0, 0.8);
+            border-radius: 50%; position: fixed; pointer-events: none; z-index: 9999;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3); transition: background 0.1s, transform 0.1s;
+        }
+
+        /* UI要素 */
+        .header { height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .info-panel { position: fixed; top: 20px; right: 20px; background: rgba(255,255,255,0.9); padding: 15px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 100; }
+        .demo-section { padding: 100px; text-align: center; }
+        .btn { padding: 20px 40px; font-size: 24px; border: none; border-radius: 50px; background: #ff4757; color: white; cursor: pointer; transition: 0.3s; }
+        .btn:hover { transform: scale(1.1); }
+
+        /* カメラ映像（デバッグ用：左下に小さく表示） */
+        #input_video { position: fixed; bottom: 10px; left: 10px; width: 240px; height: 135px; border-radius: 8px; border: 2px solid white; transform: scaleX(-1); }
+    </style>
+</head>
+<body>
+
+<div id="v-cursor"></div>
+<video id="input_video"></video>
+
+<div class="info-panel">
+    <strong>ステータス:</strong> <span id="status">カメラ起動中...</span><br>
+    <strong>モード:</strong> <span id="mode">待機中</span><br>
+    <small>移動: チョキ / クリック: 人差し指を折る / 下スクロール: 指をくっつける</small>
+</div>
+
+<div class="header">
+    <h1>Hand Mouse Technology</h1>
+    <p>Webカメラだけで、ブラウザを魔法のように操る。</p>
+    <p>↓ スクロールして体験してください</p>
+</div>
+
+<div class="demo-section">
+    <h2>クリック・デモ</h2>
+    <p>赤い丸をボタンに合わせて、人差し指を折ってみてください。</p>
+    <button class="btn" id="target-btn" onclick="alert('クリック成功！あなたのジェスチャーが認識されました。')">ここをクリック！</button>
+</div>
+
+<script type="module">
+    const videoElement = document.getElementById('input_video');
+    const cursor = document.getElementById('v-cursor');
+    const statusTxt = document.getElementById('status');
+    const modeTxt = document.getElementById('mode');
+
+    let clickDone = false;
+    let lastScrollTime = 0;
+    const SCROLL_INTERVAL = 150; // ms
+
+    // 距離計算（Pythonのget_dist相当）
+    const getDist = (p1, p2) => Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+
+    function onResults(results) {
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+            statusTxt.innerText = "手が見つかりません";
+            modeTxt.innerText = "待機中";
+            return;
+        }
+
+        statusTxt.innerText = "認識中";
+        const lms = results.multiHandLandmarks[0];
+
+        // 各関節の取得
+        const wrist = lms[0];
+        const indexTip = lms[8];
+        const indexPip = lms[6];
+        const middleTip = lms[12];
+        const middlePip = lms[10];
+
+        // --- モード判定 ---
+        const isPeace = indexTip.y < indexPip.y || middleTip.y < middlePip.y;
+        const isTouching = getDist(indexTip, middleTip) < 0.05;
+
+        // 1. 移動モード (チョキ)
+        if (isPeace && !isTouching) {
+            modeTxt.innerText = "マウスモード";
+            const x = (1 - wrist.x) * window.innerWidth;
+            const y = wrist.y * window.innerHeight;
+            cursor.style.left = `${x}px`;
+            cursor.style.top = `${y}px`;
+
+            // 左クリック判定 (人差し指を折る)
+            if (indexTip.y > indexPip.y) {
+                if (!clickDone) {
+                    cursor.style.background = "blue";
+                    cursor.style.transform = "scale(1.5)";
+                    const target = document.elementFromPoint(x, y);
+                    if (target) target.click();
+                    clickDone = true;
+                }
+            } else {
+                cursor.style.background = "rgba(255, 0, 0, 0.8)";
+                cursor.style.transform = "scale(1)";
+                clickDone = false;
+            }
+        } 
+        // 2. スクロールモード (指をくっつける)
+        else if (isTouching) {
+            modeTxt.innerText = "スクロールモード";
+            const now = Date.now();
+            if (now - lastScrollTime > SCROLL_INTERVAL) {
+                window.scrollBy(0, 50);
+                lastScrollTime = now;
+            }
+        } else {
+            modeTxt.innerText = "スタンバイ";
+        }
+    }
+
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 640, height: 360
+    });
+    camera.start();
+</script>
+
+</body>
+</html>
